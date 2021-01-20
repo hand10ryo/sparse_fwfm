@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder
 from scipy.sparse import csr_matrix, hstack
 from tqdm import tqdm
-from opt_einsum import contract
+from opt_einsum import contract, contract_expression
 from copy import deepcopy
 
 
@@ -29,8 +29,8 @@ class FwFM(Model):
         opt_einsum
     """
 
-    def __init__(self, df_X: pd.DataFrame, df_y: pd.Series, dim: int = 8,
-                 lr: float = 1e-3, n_epoch: int = 10, n_batch: int = 256,
+    def __init__(self, df_X: pd.DataFrame, df_y: pd.Series, sample_weight: np.ndarray,
+                 dim: int = 8, lr: float = 1e-3, n_epoch: int = 10, n_batch: int = 256,
                  ignore_interactions: list = [], train: bool = True,
                  lam_w: float = 0, lam_v: float = 0, lam_r: float = 0):
         """
@@ -48,6 +48,7 @@ class FwFM(Model):
             lam_r [float] : weight of l2 norm for r.
 
         """
+        self.sample_weight = sample_weight
         self.dim = dim
         self.lr = lr
         self.n_epoch = n_epoch
@@ -112,6 +113,10 @@ class FwFM(Model):
         self.X = csr_matrix(X)
         self.y = df_y.values
 
+        self.contract_predict = None
+        self.contract_der_v = None
+        self.contract_der_r = None
+
     def train(self):
         n_iter = int(self.X.shape[0] / self.n_batch)
         indices = np.arange(self.X.shape[0])
@@ -124,9 +129,10 @@ class FwFM(Model):
                 ]
                 X_batch = self.X[batch_indices]
                 y_batch = self.y[batch_indices]
+                w_batch = self.sample_weight[batch_indices]
 
                 y_hat = self.predict(X_batch)
-                a = -2 * (y_batch - y_hat)
+                a = -2 * (y_batch - y_hat) * w_batch
 
                 dL_db = (a * 1).mean()
                 dL_dw = (self.der_w(X_batch, reduction=None).T * a) / a.shape
@@ -144,16 +150,32 @@ class FwFM(Model):
         return dw
 
     def der_v(self, X: csr_matrix, reduction="mean") -> np.ndarray:
-        dv = contract("ni,if,fg,nj,jd,jg->idn", X.A,
-                      self.m2f, self.r, X.A, self.v, self.m2f)
+        if self.contract_der_v is None:
+            self.contract_der_v = contract_expression(
+                "ni,if,fg,nj,jd,jg->idn",
+                X.shape, self.m2f.shape, self.r.shape, X.shape, self.v.shape, self.m2f.shape
+            )
+
+        dv = self.contract_der_v(
+            X.A, self.m2f, self.r, X.A, self.v, self.m2f
+        )
 
         if reduction == "mean":
             dv = dv.mean(axis=2)
         return dv
 
     def der_r(self, X: csr_matrix, reduction="mean") -> np.ndarray:
-        dr = contract("ni,id,if,fg,bj,jd,jg->fgn", X.A, self.v,
-                      self.m2f, self.r_mask, X.A, self.v, self.m2f)
+        if self.contract_der_r is None:
+            self.contract_der_r = contract_expression(
+                "ni,id,if,fg,bj,jd,jg->fgn",
+                X.shape, self.v.shape, self.m2f.shape, self.r_mask.shape,
+                X.shape, self.v.shape, self.m2f.shape
+            )
+
+        dr = self.contract_der_r(
+            X.A, self.v, self.m2f, self.r_mask,
+            X.A, self.v, self.m2f
+        )
 
         if reduction == "mean":
             dr = dr.mean(axis=2)
@@ -170,8 +192,25 @@ class FwFM(Model):
         self.r -= (dL_dr * self.lr + self.lam_r * self.r)
 
     def predict(self, X: csr_matrix):
-        y_hat = contract("ni,id,if,fg,nj,jd,jg->n", X.A, self.v,
-                         self.m2f, self.r, X.A, self.v, self.m2f)
+        if X.shape[0] != self.n_batch:
+            y_hat = self.contract_predict = contract(
+                "ni,id,if,fg,nj,jd,jg->n",
+                X.A, self.v, self.m2f, self.r,
+                X.A, self.v, self.m2f
+            )
+
+        else:
+            if self.contract_predict is None:
+                self.contract_predict = contract_expression(
+                    "ni,id,if,fg,nj,jd,jg->n",
+                    X.shape, self.v.shape, self.m2f.shape, self.r.shape,
+                    X.shape, self.v.shape, self.m2f.shape
+                )
+
+            y_hat = self.contract_predict(
+                X.A, self.v, self.m2f, self.r,
+                X.A, self.v, self.m2f
+            )
         return y_hat
 
     def convert_sparse(self, df_X: pd.DataFrame):
