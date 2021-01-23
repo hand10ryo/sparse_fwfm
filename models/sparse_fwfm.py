@@ -37,6 +37,8 @@ class FwFM(Model):
         Arguments:
             df_X [pd.DataFrame] : Explanatory variables
             df_y [pd.Series] : Objective variable
+            sample_weight [np.ndarray] : sample weight.
+            optimzier [str] : "SGD" or "Adam".
             dim [int] : a number of dimention of embeddings.
             lr [float] : learning rate
             n_epoch [int] : a number of epoch/
@@ -248,14 +250,6 @@ class FwFM(Model):
         else:
             raise NotImplementedError
 
-    def adam_update(self, param, param_m, param_v, grad, lam):
-        g = grad + lam * param
-        param_m = self.beta1 * param_m + (1 - self.beta1) * g
-        param_v = self.beta2 * param_v + (1 - self.beta2) * g ** 2
-        param_m_hat = param_m / (1 - self.beta1 ** self.t)
-        param_v_hat = param_v / (1 - self.beta2 ** self.t)
-        param -= self.lr * param_m_hat / (param_v_hat ** 0.5 + 1e-10)
-
     def predict(self, X: csr_matrix):
         X_A = X.A
         y_hat_1st = contract("ni,i->n", X_A, self.w)
@@ -328,15 +322,19 @@ class ThirdOrderFwFM(Model):
         Arguments:
             df_X [pd.DataFrame] : Explanatory variables
             df_y [pd.Series] : Objective variable
+            sample_weight [np.ndarray] : sample weight.
+            optimizer [str] : "SGD" or "Adam"
+            train [bool] : wheter run train or not when initializing.
             dim [int] : a number of dimention of embeddings.
             lr [float] : learning rate
             n_epoch [int] : a number of epoch/
             n_batch [int] : a number of sample in mini-batch.
-            ignore_interactions [list]: element is pair of fields ignored interaction
-            train [bool] : wheter run train or not when initializing.
+            ignore_2nd_interactions [list]: element is lists of fields ignored interaction
+            ignore_3rd_interactions [list]: element is lists of fields ignored interaction
             lam_w [float] : weight of l2 norm for w.
             lam_v [float] : weight of l2 norm for v.
             lam_r [float] : weight of l2 norm for r.
+            lam_u [float] : weight of l2 norm for u.
 
         """
         if sample_weight is None:
@@ -580,6 +578,7 @@ class ThirdOrderFwFM(Model):
 
         elif self.optimizer == "Adam":
             self.t += 1
+
             gb = dL_db
             self.bm = self.beta1 * self.bm + (1 - self.beta1) * gb
             self.bv = self.beta2 * self.bv + (1 - self.beta2) * gb ** 2
