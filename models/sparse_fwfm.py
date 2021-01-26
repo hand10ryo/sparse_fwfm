@@ -144,22 +144,30 @@ class FwFM(Model):
 
         for ep in range(self.n_epoch):
             np.random.shuffle(indices)
-            for i in tqdm(range(n_iter)):
-                batch_indices = indices[
-                    self.n_batch * i: self.n_batch * (i + 1)
-                ]
-                X_batch = self.X[batch_indices]
-                y_batch = self.y[batch_indices]
-                w_batch = self.sample_weight[batch_indices]
+            with tqdm(range(n_iter), total=n_iter) as pbar:
+                for i in pbar:
+                    batch_indices = indices[
+                        self.n_batch * i: self.n_batch * (i + 1)
+                    ]
+                    loss_sum = 0.0
 
-                y_hat = self.predict(X_batch)
-                a = -2 * (y_batch - y_hat) * w_batch
+                    X_batch = self.X[batch_indices]
+                    y_batch = self.y[batch_indices]
+                    w_batch = self.sample_weight[batch_indices]
 
-                dL_db = (a * 1).mean()
-                dL_dw = (self.der_w(X_batch, reduction=None).T * a) / a.shape
-                dL_dv = (a * self.der_v(X_batch, reduction=None)).mean(axis=2)
-                dL_dr = (a * self.der_r(X_batch, reduction=None)).mean(axis=2)
-                self.update(dL_db, dL_dw, dL_dv, dL_dr)
+                    y_hat = self.predict(X_batch)
+                    diff = (y_batch - y_hat)
+                    loss_sum += (diff ** 2).mean() ** 0.5
+                    a = -2 * diff * w_batch
+
+                    dL_db = (a * 1).mean()
+                    dL_dw = (self.der_w(X_batch, reduction=0).T * a) / a.shape
+                    dL_dv = (a * self.der_v(X_batch, reduction=0)).mean(axis=2)
+                    dL_dr = (a * self.der_r(X_batch, reduction=0)).mean(axis=2)
+                    self.update(dL_db, dL_dw, dL_dv, dL_dr)
+
+                    pbar.set_description_str(
+                        f'epoch{ep+1} avg_loss:{loss_sum / (i+1) :.8f}')
 
         return self
 
@@ -462,23 +470,31 @@ class ThirdOrderFwFM(Model):
 
         for ep in range(self.n_epoch):
             np.random.shuffle(indices)
-            for i in tqdm(range(n_iter)):
-                batch_indices = indices[
-                    self.n_batch * i: self.n_batch * (i + 1)
-                ]
-                X_batch = self.X[batch_indices]
-                y_batch = self.y[batch_indices]
-                w_batch = self.sample_weight[batch_indices]
+            with tqdm(range(n_iter), total=n_iter) as pbar:
+                for i in pbar:
+                    batch_indices = indices[
+                        self.n_batch * i: self.n_batch * (i + 1)
+                    ]
+                    loss_sum = 0.0
 
-                y_hat = self.predict(X_batch)
-                a = -2 * (y_batch - y_hat) * w_batch
+                    X_batch = self.X[batch_indices]
+                    y_batch = self.y[batch_indices]
+                    w_batch = self.sample_weight[batch_indices]
 
-                dL_db = (a * 1).mean()
-                dL_dw = (self.der_w(X_batch, reduction=None).T * a) / a.shape
-                dL_dv = (a * self.der_v(X_batch, reduction=None)).mean(axis=2)
-                dL_dr = (a * self.der_r(X_batch, reduction=None)).mean(axis=2)
-                dL_du = (a * self.der_u(X_batch, reduction=None)).mean(axis=3)
-                self.update(dL_db, dL_dw, dL_dv, dL_dr, dL_du)
+                    y_hat = self.predict(X_batch)
+                    diff = (y_batch - y_hat)
+                    loss_sum += (diff ** 2).mean() ** 0.5
+                    a = -2 * diff * w_batch
+
+                    dL_db = (a * 1).mean()
+                    dL_dw = (self.der_w(X_batch, reduction=0).T * a) / a.shape
+                    dL_dv = (a * self.der_v(X_batch, reduction=0)).mean(axis=2)
+                    dL_dr = (a * self.der_r(X_batch, reduction=0)).mean(axis=2)
+                    dL_du = (a * self.der_u(X_batch, reduction=0)).mean(axis=3)
+                    self.update(dL_db, dL_dw, dL_dv, dL_dr, dL_du)
+
+                    pbar.set_description_str(
+                        f'epoch{ep+1} avg_loss:{loss_sum / (i+1) :.8f}')
 
         return self
 
